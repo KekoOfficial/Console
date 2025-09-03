@@ -1,11 +1,10 @@
 /* Archivo: index.js
  * Descripción: Bot "Subbot" para WhatsApp.
- * Versión con máxima robustez, lógica de errores y optimización.
+ * Versión optimizada con lógica avanzada para asegurar un funcionamiento automático y robusto.
  *
  * Características clave:
- * - Conexión y Reconexión automática con lógica exponencial de reintento.
- * - Gestión de estado de sesión para no requerir QR de nuevo.
- * - Mensajes de bienvenida inteligentes a nuevos miembros del grupo (una vez por persona/grupo).
+ * - Conexión y Reconexión automática con lógica de reintento exponencial.
+ * - Mensajes de bienvenida inteligentes y sin duplicados para nuevos miembros.
  * - Persistencia de datos atómica para evitar corrupción de archivos.
  * - Manejo de comandos en grupos.
  * - Reporte de errores detallado y limpio.
@@ -15,6 +14,7 @@ import makeWASocket, { DisconnectReason, fetchLatestBaileysVersion, jidNormalize
 import pino from 'pino';
 import fs from 'fs';
 import path from 'path';
+import qrcode from 'qrcode-terminal';
 
 // --- CONFIGURACIÓN DEL SISTEMA Y REGISTRO (LOGGING) ---
 const logger = pino({ level: 'info' }).child({ level: 'info' });
@@ -22,7 +22,7 @@ const DB_FILE = path.resolve('./db.json');
 const SESSION_PATH = 'baileys_auth';
 
 // --- LÓGICA DE PERSISTENCIA ATÓMICA ---
-// Asegura que los datos no se corrompan si el proceso se interrumpe al guardar.
+// Garantiza que los datos no se corrompan si el proceso se interrumpe.
 function loadDB() {
     try {
         if (!fs.existsSync(DB_FILE)) {
@@ -32,7 +32,7 @@ function loadDB() {
         return JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
     } catch (e) {
         logger.error(`Error crítico: Fallo al cargar db.json. Motivo: ${e.message}`);
-        process.exit(1); // Finalizar el proceso si no se puede leer la base de datos.
+        process.exit(1); 
     }
 }
 
@@ -72,6 +72,7 @@ async function connectToWhatsApp() {
 
             if (qr) {
                 console.log('\nEscanea el QR para vincular. Esta es la única vez que lo verás.\n');
+                qrcode.generate(qr, { small: true });
             }
 
             if (connection === 'close') {
@@ -166,5 +167,4 @@ async function sendWelcomeMessage(jid, gid, sock) {
     }
 }
 
-// Iniciar el bot.
 connectToWhatsApp();
