@@ -1,14 +1,14 @@
-/* Archivo: index.js Bot Console actualizado con sistema de log en consola Incluye:
+/* Archivo: index.js Descripción: Console Bot actualizado para envío automático de mensajes privados a todos los miembros de cualquier grupo. Incluye:
 
 Conexión por QR
 
-Mensajes privados hermosos con emojis, fecha, hora y milisegundos
+Envío automático a todos los miembros de un grupo (al entrar el bot o al unirse nuevos miembros)
 
-Envío masivo a todos los miembros de un grupo en privado (solo una vez)
+Mensajes hermosos con emojis, fecha, hora y milisegundos
 
-Logs persistentes en db.json
+Logs en consola solo con envíos realizados
 
-Logs en consola con detalles de envíos recientes
+Persistencia en db.json para no repetir mensajes
 
 Comando .help en grupos */
 
@@ -39,11 +39,11 @@ if(connection === 'close'){
   }
 }
 
-if(connection === 'open') logger.info('Sesión conectada')
+if(connection === 'open') logger.info('✅ Bot conectado a WhatsApp')
 
 })
 
-sock.ev.on('messages.upsert', async (m) => { if(m.type !== 'notify') return for(const msg of m.messages){ if(!msg.message) continue const from = msg.key.remoteJid const isGroup = from.endsWith('@g.us') const content = msg.message.conversation || (msg.message.extendedTextMessage && msg.message.extendedTextMessage.text) || ''
+// Comando .help en grupos sock.ev.on('messages.upsert', async (m) => { if(m.type !== 'notify') return for(const msg of m.messages){ if(!msg.message) continue const from = msg.key.remoteJid const isGroup = from.endsWith('@g.us') const content = msg.message.conversation || (msg.message.extendedTextMessage && msg.message.extendedTextMessage.text) || ''
 
 if(isGroup && content.trim().toLowerCase() === '.help'){
     await sock.sendMessage(from, { text: '🌟 Soy Console Subbot 🌟\nComandos disponibles:\n.help - Mostrar ayuda' })
@@ -52,19 +52,20 @@ if(isGroup && content.trim().toLowerCase() === '.help'){
 
 })
 
-sock.ev.on('group-participants.update', async (update) => { const gid = update.id const participants = update.participants const action = update.action
+// Detectar miembros automáticamente y enviar mensaje privado sock.ev.on('group-participants.update', async (update) => { const gid = update.id const participants = update.participants const action = update.action const botJid = sock.user.id
 
 if(action === 'add'){
-  const botJid = sock.user.id
   if(participants.includes(botJid)){
+    // Bot agregado, enviar mensaje a todos los miembros del grupo automáticamente
     const groupMetadata = await sock.groupMetadata(gid)
     for(const member of groupMetadata.participants.map(p => p.id)){
       if(member === botJid) continue
       await sendPrivateMember(member, gid, sock)
     }
   } else {
+    // Nuevos miembros se unieron, enviar mensaje si no recibido antes
     for(const p of participants){
-      if(p === sock.user.id) continue
+      if(p === botJid) continue
       await sendPrivateMember(p, gid, sock)
     }
   }
@@ -81,14 +82,11 @@ try{
   await sock.sendMessage(jid, { text })
   db.privateSent.push({ jid, grupo: gid, fecha, hora })
   saveDB(db)
-  logger.info(`✅ Mensaje enviado a ${jid} desde grupo ${gid} | Fecha: ${fecha} Hora: ${hora}`)
-}catch(e){
-  logger.error('❌ Error enviando mensaje privado:', e)
-}
+  console.log(`✅ Mensaje enviado a ${jid}
 
-}
+📅 Fecha: ${fecha} ⏰ Hora: ${hora} 💬 Grupo: ${gid}\n`) }catch(e){ console.error('❌ Error enviando mensaje privado:', e) } }
 
-global.consoleSubbot = { sendPrivateMember, db } logger.info('Console Subbot listo. Logs de envíos recientes se muestran en consola.') }
+global.consoleSubbot = { sendPrivateMember, db } logger.info('Console Subbot listo. Envíos automáticos activados para todos los miembros.') }
 
 startBot().catch(e => logger.error('Fallo al iniciar bot:', e))
 
