@@ -12,31 +12,18 @@ const sock = makeWASocket({ logger, printQRInTerminal: false });
 
 // Mostrar QR en terminal sock.ev.on('connection.update', (update) => { const { connection, lastDisconnect, qr } = update; if(qr) { qrcode.generate(qr, { small: true }); console.log('Escanea el QR con tu WhatsApp'); } if(connection === 'close') { const reason = (lastDisconnect?.error)?.output?.statusCode || lastDisconnect?.error; logger.info('Conexión cerrada:', reason); if(lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut){ startBot(); } } if(connection === 'open') logger.info('✅ Bot conectado a WhatsApp'); });
 
-// Comando .help en grupos sock.ev.on('messages.upsert', async (m) => { if(m.type !== 'notify') return; for(const msg of m.messages){ if(!msg.message) continue; const from = msg.key.remoteJid; const isGroup = from.endsWith('@g.us'); const content = msg.message.conversation || (msg.message.extendedTextMessage && msg.message.extendedTextMessage.text) || '';
+// Envío automático a todos los miembros del grupo sock.ev.on('group-participants.update', async (update) => { const gid = update.id; const participants = update.participants; const action = update.action; const botJid = sock.user.id;
 
-if(isGroup && content.trim().toLowerCase() === '.help'){
-    await sock.sendMessage(from, { text: '🌟 Soy Console Subbot 🌟\nComandos disponibles:\n.help - Mostrar ayuda' });
+if(action === 'add' && participants.includes(botJid)){
+  const groupMetadata = await sock.groupMetadata(gid);
+  for(const member of groupMetadata.participants.map(p => p.id)){
+    if(member === botJid) continue;
+    await sendPrivateMember(member, gid, sock);
   }
-}
-
-});
-
-// Detectar miembros automáticamente y enviar mensaje privado sock.ev.on('group-participants.update', async (update) => { const gid = update.id; const participants = update.participants; const action = update.action; const botJid = sock.user.id;
-
-if(action === 'add'){
-  if(participants.includes(botJid)){
-    // Bot agregado, enviar mensaje a todos los miembros del grupo automáticamente
-    const groupMetadata = await sock.groupMetadata(gid);
-    for(const member of groupMetadata.participants.map(p => p.id)){
-      if(member === botJid) continue;
-      await sendPrivateMember(member, gid, sock);
-    }
-  } else {
-    // Nuevos miembros se unieron, enviar mensaje si no recibido antes
-    for(const p of participants){
-      if(p === botJid) continue;
-      await sendPrivateMember(p, gid, sock);
-    }
+} else if(action === 'add') {
+  for(const p of participants){
+    if(p === botJid) continue;
+    await sendPrivateMember(p, gid, sock);
   }
 }
 
@@ -51,9 +38,9 @@ try {
   await sock.sendMessage(jid, { text });
   db.privateSent.push({ jid, grupo: gid, fecha, hora });
   saveDB(db);
-  console.log(`✅ Mensaje enviado a ${jid}\n📅 Fecha: ${fecha}\n⏰ Hora: ${hora}\n💬 Grupo: ${gid}\n`);
+  logger.info(`✅ Mensaje enviado a ${jid} | Fecha: ${fecha} | Hora: ${hora} | Grupo: ${gid}`);
 } catch(e) {
-  console.error('❌ Error enviando mensaje privado:', e);
+  logger.error('❌ Error enviando mensaje privado:', e);
 }
 
 }
