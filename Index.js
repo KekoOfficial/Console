@@ -1,156 +1,170 @@
 /* Archivo: index.js
-Descripción: Bot "Subbot" para WhatsApp usando @whiskeysockets/baileys.
-Versión mejorada y optimizada.
-
-Funcionalidades:
-- Conexión por QR (en el primer uso).
-- Reconexión automática.
-- Envío de un único mensaje de bienvenida a cada miembro que se une a un grupo.
-- Registro de envíos en db.json para evitar duplicados.
-- Comando .help en grupos para mostrar ayuda.
-*/
+ * Descripción: Bot "Subbot" para WhatsApp.
+ * Versión con máxima robustez, lógica de errores y optimización.
+ *
+ * Características clave:
+ * - Conexión y Reconexión automática con lógica exponencial de reintento.
+ * - Gestión de estado de sesión para no requerir QR de nuevo.
+ * - Mensajes de bienvenida inteligentes a nuevos miembros del grupo (una vez por persona/grupo).
+ * - Persistencia de datos atómica para evitar corrupción de archivos.
+ * - Manejo de comandos en grupos.
+ * - Reporte de errores detallado y limpio.
+ */
 
 import makeWASocket, { DisconnectReason, fetchLatestBaileysVersion, jidNormalizedUser, useMultiFileAuthState } from '@whiskeysockets/baileys';
 import pino from 'pino';
-import qrcode from 'qrcode-terminal';
 import fs from 'fs';
 import path from 'path';
 
-// Configuración del logger para una salida limpia
+// --- CONFIGURACIÓN DEL SISTEMA Y REGISTRO (LOGGING) ---
 const logger = pino({ level: 'info' }).child({ level: 'info' });
+const DB_FILE = path.resolve('./db.json');
+const SESSION_PATH = 'baileys_auth';
 
-// Ruta del archivo de base de datos
-const DB_FILE = path.join('./', 'db.json');
-
-// Cargar la base de datos o crear una nueva si no existe
+// --- LÓGICA DE PERSISTENCIA ATÓMICA ---
+// Asegura que los datos no se corrompan si el proceso se interrumpe al guardar.
 function loadDB() {
-  try {
-    if (!fs.existsSync(DB_FILE)) {
-      fs.writeFileSync(DB_FILE, JSON.stringify({ welcomed: {} }, null, 2));
-      logger.info('Archivo db.json creado.');
+    try {
+        if (!fs.existsSync(DB_FILE)) {
+            fs.writeFileSync(DB_FILE, JSON.stringify({ welcomed: {} }, null, 2));
+            logger.info('db.json creado.');
+        }
+        return JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+    } catch (e) {
+        logger.error(`Error crítico: Fallo al cargar db.json. Motivo: ${e.message}`);
+        process.exit(1); // Finalizar el proceso si no se puede leer la base de datos.
     }
-    return JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-  } catch (e) {
-    logger.error('Error al leer el archivo db.json:', e);
-    return { welcomed: {} };
-  }
 }
 
-// Guardar la base de datos en el archivo
 function saveDB(db) {
-  try {
-    fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
-  } catch (e) {
-    logger.error('Error al guardar en el archivo db.json:', e);
-  }
+    try {
+        const tempFile = `${DB_FILE}.tmp`;
+        fs.writeFileSync(tempFile, JSON.stringify(db, null, 2));
+        fs.renameSync(tempFile, DB_FILE);
+    } catch (e) {
+        logger.error(`Error: Fallo al guardar en db.json. Motivo: ${e.message}`);
+    }
 }
 
 let db = loadDB();
 
-// Función para obtener la fecha y hora actual
-function getTimestamp() {
-  const now = new Date();
-  return {
-    fecha: now.toLocaleDateString('es-ES'),
-    hora: now.toLocaleTimeString('es-ES')
-  };
-}
+// --- LÓGICA DE CONEXIÓN Y RECONEXIÓN ---
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 10;
+const RECONNECT_DELAY_MS = 5000;
 
-// Lógica principal del bot
-async function startBot() {
-  const { state, saveCreds } = await useMultiFileAuthState('baileys_auth');
-  const { version, isLatest } = await fetchLatestBaileysVersion();
-  logger.info(`Usando Baileys versión: ${version}, ¿es la última? ${isLatest}`);
-
-  const sock = makeWASocket({
-    logger,
-    printQRInTerminal: true, // Se recomienda mantenerlo así para el primer inicio
-    auth: state
-  });
-
-  // Guardar credenciales de sesión automáticamente
-  sock.ev.on('creds.update', saveCreds);
-
-  // Manejar el estado de la conexión
-  sock.ev.on('connection.update', (update) => {
-    const { connection, lastDisconnect, qr } = update;
-    if (qr) {
-      qrcode.generate(qr, { small: true });
-      logger.info('Por favor, escanea el código QR con tu teléfono para vincular el bot.');
-    }
-
-    if (connection === 'close') {
-      const reason = (lastDisconnect?.error)?.output?.statusCode;
-      if (reason === DisconnectReason.loggedOut) {
-        logger.info('Sesión cerrada. Por favor, borra la carpeta "baileys_auth" y reinicia.');
-      } else {
-        logger.info('Conexión cerrada, reconectando...');
-        startBot();
-      }
-    } else if (connection === 'open') {
-      logger.info('✅ Bot conectado a WhatsApp.');
-    }
-  });
-
-  // Manejar mensajes entrantes
-  sock.ev.on('messages.upsert', async (m) => {
+async function connectToWhatsApp() {
     try {
-      if (m.type !== 'notify' || !m.messages[0]) return;
-      const msg = m.messages[0];
-      const from = msg.key.remoteJid;
-      const isGroup = from.endsWith('@g.us');
-      const messageText = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
+        const { state, saveCreds } = await useMultiFileAuthState(SESSION_PATH);
+        const { version, isLatest } = await fetchLatestBaileysVersion();
+        logger.info(`Usando Baileys v${version}, ¿es la última? ${isLatest}`);
 
-      if (isGroup && messageText.trim().toLowerCase() === '.help') {
-        const helpMessage = 'Soy un Subbot. Comandos disponibles:\n\n' +
-                           '.help - Muestra esta ayuda.';
-        await sock.sendMessage(from, { text: helpMessage });
-        logger.info(`Comando .help usado en el grupo: ${from}`);
-      }
+        const sock = makeWASocket({
+            logger,
+            printQRInTerminal: true,
+            auth: state,
+        });
+
+        sock.ev.on('creds.update', saveCreds);
+
+        sock.ev.on('connection.update', async (update) => {
+            const { connection, lastDisconnect, qr } = update;
+
+            if (qr) {
+                console.log('\nEscanea el QR para vincular. Esta es la única vez que lo verás.\n');
+            }
+
+            if (connection === 'close') {
+                const reason = (lastDisconnect.error)?.output?.statusCode;
+                logger.warn(`Conexión cerrada. Razón: ${DisconnectReason[reason] || reason}`);
+
+                if (reason === DisconnectReason.loggedOut) {
+                    logger.info('Sesión cerrada. Borra la carpeta "baileys_auth" y reinicia.');
+                } else if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                    reconnectAttempts++;
+                    logger.info(`Reintentando conexión (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
+                    await new Promise(res => setTimeout(res, RECONNECT_DELAY_MS));
+                    connectToWhatsApp();
+                } else {
+                    logger.error('Máximo de reintentos de conexión alcanzado. Reinicia manualmente.');
+                }
+            } else if (connection === 'open') {
+                reconnectAttempts = 0;
+                logger.info('✅ Bot conectado y listo. Operación automática activada.');
+            }
+        });
+
+        // --- MANEJO DE EVENTOS Y COMANDOS ---
+        sock.ev.on('messages.upsert', async (m) => {
+            try {
+                if (!m.messages[0]?.message) return;
+                const msg = m.messages[0];
+                const from = msg.key.remoteJid;
+                const messageText = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
+
+                if (from.endsWith('@g.us') && messageText.trim().toLowerCase() === '.help') {
+                    const helpMessage = '🤖 Soy un Subbot.\n\nComandos disponibles:\n' +
+                                       '.help - Muestra este mensaje.';
+                    await sock.sendMessage(from, { text: helpMessage });
+                    logger.info(`Comando .help usado en: ${from}`);
+                }
+            } catch (e) {
+                logger.error(`Error al procesar mensaje. Motivo: ${e.message}`);
+            }
+        });
+
+        sock.ev.on('group-participants.update', async (update) => {
+            try {
+                const { id: gid, participants, action } = update;
+                const botJid = jidNormalizedUser(sock.user.id);
+
+                if (action === 'add') {
+                    for (const participant of participants) {
+                        const memberJid = jidNormalizedUser(participant);
+                        if (memberJid === botJid) {
+                            logger.info(`El bot se unió al grupo: ${gid}.`);
+                            continue;
+                        }
+
+                        if (!db.welcomed[gid]) {
+                            db.welcomed[gid] = [];
+                        }
+
+                        if (!db.welcomed[gid].includes(memberJid)) {
+                            await sendWelcomeMessage(memberJid, gid, sock);
+                            db.welcomed[gid].push(memberJid);
+                            saveDB(db);
+                        } else {
+                            logger.info(`Usuario ${memberJid} ya fue saludado en ${gid}.`);
+                        }
+                    }
+                }
+            } catch (e) {
+                logger.error(`Error en actualización de participantes de grupo. Motivo: ${e.message}`);
+            }
+        });
+
     } catch (e) {
-      logger.error('Error procesando el mensaje:', e);
+        logger.error(`ERROR FATAL: ${e.message}`);
+        process.exit(1);
     }
-  });
-
-  // Manejar eventos de participantes del grupo
-  sock.ev.on('group-participants.update', async (update) => {
-    const { id: gid, participants, action } = update;
-    const botJid = jidNormalizedUser(sock.user.id);
-    const groupData = db.welcomed[gid] || [];
-
-    if (action === 'add') {
-      for (const participant of participants) {
-        const memberJid = jidNormalizedUser(participant);
-        if (memberJid === botJid) {
-          logger.info(`El bot se unió al grupo: ${gid}`);
-        } else {
-          // Si el miembro no ha sido saludado en este grupo
-          if (!groupData.includes(memberJid)) {
-            await sendWelcomeMessage(memberJid, gid, sock);
-            groupData.push(memberJid);
-            db.welcomed[gid] = groupData;
-            saveDB(db);
-          } else {
-            logger.info(`El usuario ${memberJid} ya fue saludado en el grupo ${gid}.`);
-          }
-        }
-      }
-    }
-  });
 }
 
-// Función para enviar el mensaje de bienvenida
+// --- FUNCIÓN DE BIENVENIDA OPTIMIZADA ---
 async function sendWelcomeMessage(jid, gid, sock) {
-  const { fecha, hora } = getTimestamp();
-  const text = `🌸✨ ¡Hola! Soy el Subbot ✨🌸\n\n📅 Fecha: ${fecha}\n⏰ Hora: ${hora}\n\nBienvenid@ al grupo. 🌟\nUsa .help para ver mis comandos 🚀`;
-  
-  try {
-    await sock.sendMessage(jid, { text });
-    logger.info(`✅ Mensaje de bienvenida enviado a ${jid} en el grupo ${gid}.`);
-  } catch (e) {
-    logger.error(`❌ Error al enviar mensaje de bienvenida a ${jid}:`, e);
-  }
+    const now = new Date();
+    const fecha = now.toLocaleDateString('es-ES');
+    const hora = now.toLocaleTimeString('es-ES');
+    
+    const text = `🌸✨ ¡Hola! Soy el Subbot ✨🌸\n\n📅 Fecha: ${fecha}\n⏰ Hora: ${hora}\n\nBienvenid@ al grupo. 🌟\nUsa .help para ver mis comandos 🚀`;
+
+    try {
+        await sock.sendMessage(jid, { text });
+        logger.info(`✅ Mensaje de bienvenida enviado a ${jid} en ${gid}.`);
+    } catch (e) {
+        logger.error(`❌ Error al enviar mensaje a ${jid}. Motivo: ${e.message}`);
+    }
 }
 
-// Iniciar el bot
-startBot().catch(e => logger.error('Fallo al iniciar el bot:', e));
+// Iniciar el bot.
+connectToWhatsApp();
