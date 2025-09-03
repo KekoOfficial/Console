@@ -1,13 +1,13 @@
 /* Archivo: index.js
  * Descripción: Bot "Subbot" para WhatsApp.
- * Versión optimizada con lógica avanzada para asegurar un funcionamiento automático y robusto.
+ * Versión optimizada con manejo de errores para evitar mensajes de consola innecesarios.
  *
  * Características clave:
- * - Conexión y Reconexión automática con lógica de reintento exponencial.
- * - Mensajes de bienvenida inteligentes y sin duplicados para nuevos miembros.
- * - Persistencia de datos atómica para evitar corrupción de archivos.
+ * - Conexión y Reconexión automática.
+ * - Mensajes de bienvenida inteligentes y sin duplicados.
+ * - Persistencia de datos atómica.
  * - Manejo de comandos en grupos.
- * - Reporte de errores detallado y limpio.
+ * - Manejo de errores para que la operación no se detenga.
  */
 
 import makeWASocket, { DisconnectReason, fetchLatestBaileysVersion, jidNormalizedUser, useMultiFileAuthState } from '@whiskeysockets/baileys';
@@ -22,7 +22,6 @@ const DB_FILE = path.resolve('./db.json');
 const SESSION_PATH = 'baileys_auth';
 
 // --- LÓGICA DE PERSISTENCIA ATÓMICA ---
-// Garantiza que los datos no se corrompan si el proceso se interrumpe.
 function loadDB() {
     try {
         if (!fs.existsSync(DB_FILE)) {
@@ -32,7 +31,7 @@ function loadDB() {
         return JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
     } catch (e) {
         logger.error(`Error crítico: Fallo al cargar db.json. Motivo: ${e.message}`);
-        process.exit(1); 
+        process.exit(1);
     }
 }
 
@@ -163,7 +162,9 @@ async function sendWelcomeMessage(jid, gid, sock) {
         await sock.sendMessage(jid, { text });
         logger.info(`✅ Mensaje de bienvenida enviado a ${jid} en ${gid}.`);
     } catch (e) {
-        logger.error(`❌ Error al enviar mensaje a ${jid}. Motivo: ${e.message}`);
+        // Maneja el error sin mostrar la traza completa ni detener el bot.
+        // Esto previene los mensajes repetidos que no quieres ver.
+        logger.warn(`❌ No se pudo enviar el mensaje a ${jid}. Motivo: ${e.message}`);
     }
 }
 
