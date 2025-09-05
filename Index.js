@@ -1,101 +1,105 @@
-// index.js
-// MaestroSubbot v2 - Baileys + QR terminal (manejo manual de connection.update)
+// index.js - MaestroSubbot (mejorado para Termux)
 // Requisitos: Node >= 18
-// Instalar: npm install @whiskeysockets/baileys qrcode
+// npm install @whiskeysockets/baileys qrcode
 
 const { default: makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion, DisconnectReason } = require('@whiskeysockets/baileys');
 const qrcode = require('qrcode');
 const fs = require('fs');
 const readline = require('readline');
+const url = require('url');
 
 const AUTH_FOLDER = './auth_info';
 const BROWSER = ['MaestroSubbot', 'Desktop', '1.0.0'];
 
+// Estado en memoria
 let owner = {};
 let historial = { mensajes: [], media: [] };
 let subbots = [];
 let backups = [];
 
-function generarIdUnico() {
-  return 'owner_' + Math.random().toString(36).substr(2, 9);
-}
-function registrarOwner(ownerId, nombre) {
-  owner = { id: ownerId, nombre, registrado: Date.now() };
-  console.log('Owner registrado:', owner);
-}
-function cargarBackups() {
-  if (backups.length > 0) {
-    const last = backups[backups.length - 1];
-    owner = last.owner; historial = last.historial; subbots = last.subbots;
-    console.log('Backups restaurados.');
-  } else console.log('No hay backups previos.');
-}
-function guardarMensaje(mensaje) { historial.mensajes.push(mensaje); console.log('Mensaje guardado.'); }
-function guardarMedia(archivo, contacto, tipo) { historial.media.push({ archivo, contacto, tipo, fecha: Date.now() }); console.log('Archivo multimedia guardado.'); }
-function backupAutomatico() {
-  backups.push({ owner: { ...owner }, historial: JSON.parse(JSON.stringify(historial)), subbots: [...subbots], fecha: Date.now() });
-  console.log('Backup automático realizado.');
-}
-function comandoC() { console.log('Comando .c - Estado conexión Owner:', owner && owner.id ? 'Conectado' : 'No registrado'); }
-function comandoCC() { console.log('Comando .cc - Historial completo:', JSON.stringify(historial, null, 2)); }
-function comandoP() { console.log('Comando .p - Parámetros modificados (simulado).'); }
-function comandoCerrar(sock) { console.log('Comando .cerrar - Cerrando conexión...'); if (sock && typeof sock.logout === 'function') sock.logout().catch(()=>{}); process.exit(0); }
-function comandoLista() { console.log('Comando .lista - Subbots conectados:', subbots); }
+// Util
+function generarIdUnico(){ return 'owner_' + Math.random().toString(36).substr(2,9); }
+function registrarOwner(ownerId, nombre){ owner = { id: ownerId, nombre, registrado: Date.now() }; console.log('Owner registrado:', owner); }
+function cargarBackups(){ if(backups.length>0){ const last = backups[backups.length-1]; owner=last.owner; historial=last.historial; subbots=last.subbots; console.log('Backups restaurados.'); } else console.log('No hay backups previos.'); }
+function guardarMensaje(m){ historial.mensajes.push(m); console.log('Mensaje guardado.'); }
+function guardarMedia(a,c,t){ historial.media.push({ archivo:a, contacto:c, tipo:t, fecha: Date.now() }); console.log('Archivo multimedia guardado.'); }
+function backupAutomatico(){ backups.push({ owner:{...owner}, historial:JSON.parse(JSON.stringify(historial)), subbots:[...subbots], fecha: Date.now() }); console.log('Backup automático realizado.'); }
 
-async function startBot() {
-  try {
+// Comandos
+function comandoC(){ console.log('Comando .c - Estado conexión Owner:', owner && owner.id ? 'Conectado' : 'No registrado'); }
+function comandoCC(){ console.log('Comando .cc - Historial completo:', JSON.stringify(historial, null, 2)); }
+function comandoP(){ console.log('Comando .p - Parámetros modificados (simulado).'); }
+function comandoCerrar(sock){ console.log('Comando .cerrar - Cerrando conexión...'); if(sock && typeof sock.logout === 'function') sock.logout().catch(()=>{}); process.exit(0); }
+function comandoLista(){ console.log('Comando .lista - Subbots conectados:', subbots); }
+
+// Backoff para reconexión
+let reconnectDelay = 1000;
+function nextDelay(){ reconnectDelay = Math.min(60000, reconnectDelay * 1.8); return reconnectDelay; }
+function resetDelay(){ reconnectDelay = 1000; }
+
+// Inicia bot
+async function startBot(){
+  try{
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_FOLDER);
-    const { version } = await fetchLatestBaileysVersion().catch(()=>({ version: [2, 3000, 0] }));
-    console.log('Baileys version to use:', version);
+    const { version } = await fetchLatestBaileysVersion().catch(()=>({ version: [2,3000,0] }));
+    console.log('Baileys version:', version);
+
+    // Opcional: configurar proxy vía env WA_PROXY (ej: http://127.0.0.1:8888)
+    const connectOptions = {};
+    if (process.env.WA_PROXY) {
+      console.log('Usando proxy WA_PROXY=', process.env.WA_PROXY);
+      connectOptions.fetchAgent = undefined; // si necesitas un agent custom, configúralo aquí
+    }
 
     const sock = makeWASocket({
       version,
       auth: state,
       browser: BROWSER,
-      getMessage: async key => ({ conversation: '' })
+      getMessage: async key => ({ conversation: '' }),
+      ...connectOptions
     });
 
     sock.ev.on('creds.update', saveCreds);
 
-    // connection.update: manejamos QR aquí
     sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr } = update;
 
       if (qr) {
-        // Generar QR ASCII en terminal para escanear con WhatsApp > Dispositivos vinculados > Vincular un dispositivo
-        qrcode.toString(qr, { type: 'terminal' }, (err, url) => {
-          if (err) {
-            console.error('Error generando QR en terminal:', err);
-            console.log('QR string (por si acaso):', qr);
-            return;
-          }
-          console.log('\n---- ESCANEA ESTE QR CON WHATSAPP ----\n');
-          console.log(url);
-          console.log('\nSi no puedes ver el QR, copia este string y úsalo donde necesites:\n', qr, '\n');
+        // Mostrar QR ASCII para escanear
+        qrcode.toString(qr, { type: 'terminal' }, (err, out) => {
+          if(err){ console.error('Error generando QR ascii:', err); console.log('QR string:', qr); return; }
+          console.log('\n---- ESCANEA ESTE QR EN WHATSAPP > Dispositivos vinculados > Vincular un dispositivo ----\n');
+          console.log(out);
+          console.log('\nSi no puedes ver el QR aquí, copia el string a un editor:\n', qr, '\n');
         });
       }
 
-      if (connection === 'open') {
+      if (connection === 'open'){
         console.log('Conectado a WhatsApp Web ✅');
+        resetDelay();
         try {
           const userId = sock.user && (sock.user.id || sock.user.jid) ? (sock.user.id || sock.user.jid) : generarIdUnico();
           registrarOwner(userId, (owner.nombre || 'Keko'));
           backupAutomatico();
-        } catch (err) { console.log('Error registrando owner:', err); }
+        } catch(e){ console.log('Error en registro owner:', e); }
       }
 
-      if (connection === 'close') {
+      if (connection === 'close'){
+        const err = lastDisconnect?.error;
+        console.log('Conexión cerrada. lastDisconnect:', JSON.stringify(lastDisconnect?.error?.output || lastDisconnect?.error || lastDisconnect, null, 2));
+        // Si fue loggedOut => eliminar credenciales para forzar QR nuevo (solo si el usuario quiere)
         const code = lastDisconnect?.error?.output?.statusCode;
-        console.log('Conexión cerrada. Código:', code);
-        if (code === DisconnectReason.loggedOut) {
-          console.log('Sesión cerrada (loggedOut). Borra', AUTH_FOLDER, 'para regenerar QR.');
+        if(code === DisconnectReason.loggedOut){
+          console.log('Sesión cerrada (loggedOut). Borra la carpeta', AUTH_FOLDER, 'si quieres regenerar QR.');
         } else {
-          console.log('Reconectando en 3s...');
-          setTimeout(() => startBot().catch(e => console.error('Error al reconectar:', e)), 3000);
+          const delay = nextDelay();
+          console.log(`Reconectando en ${Math.round(delay/1000)}s (backoff) ...`);
+          setTimeout(()=> startBot().catch(e => console.error('Error al reconectar:', e)), delay);
         }
       }
     });
 
+    // Mensajes entrantes
     sock.ev.on('messages.upsert', m => {
       try {
         const messages = m.messages || [];
@@ -108,17 +112,20 @@ async function startBot() {
           guardarMensaje({ de: from, texto: text, fecha: Date.now() });
           console.log('Mensaje recibido de', from, ':', text);
         });
-      } catch (err) { console.error('Error en messages.upsert:', err); }
+      } catch(e){ console.error('messages.upsert error:', e); }
     });
 
     startConsoleInterface(sock);
 
-  } catch (err) {
+  } catch(err){
     console.error('Error inicializando bot:', err);
+    const delay = nextDelay();
+    console.log(`Reintentando start en ${Math.round(delay/1000)}s ...`);
+    setTimeout(()=> startBot().catch(e=>console.error('Error al reintentar start:', e)), delay);
   }
 }
 
-function startConsoleInterface(sock) {
+function startConsoleInterface(sock){
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout, prompt: '> ' });
   console.log('\nInterfaz en consola lista. Comandos: .c .cc .p .cerrar .lista .backup .restore .qr .help\n');
   rl.prompt();
@@ -132,13 +139,8 @@ function startConsoleInterface(sock) {
     else if (cmd === '.backup') backupAutomatico();
     else if (cmd === '.restore' || cmd === '.cargar') cargarBackups();
     else if (cmd === '.qr') {
-      // Genera un QR local (no es el de WhatsApp) — útil para pruebas
       const id = generarIdUnico();
-      qrcode.toString(id, { type: 'terminal' }, (err, url) => {
-        if (err) return console.error('Error generando qr local:', err);
-        console.log('QR (local) para id:', id);
-        console.log(url);
-      });
+      qrcode.toString(id, { type: 'terminal' }, (err, url) => { if (err) return console.error('Error gen qr local:', err); console.log('QR (local) para id:', id); console.log(url); });
     }
     else if (cmd === '.cerrar') comandoCerrar(sock);
     else if (cmd === '.help') console.log('Comandos: .c .cc .p .cerrar .lista .backup .restore .qr .help .exit');
@@ -147,9 +149,7 @@ function startConsoleInterface(sock) {
     rl.prompt();
   });
 
-  rl.on('close', () => {
-    console.log('Interfaz cerrada. Si quieres mantener el bot en background usa pm2 o nohup.');
-  });
+  rl.on('close', () => console.log('Interfaz cerrada.'));
 }
 
 startBot();
