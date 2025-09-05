@@ -17,6 +17,14 @@ let historial = { mensajes: [], media: [] };
 let subbots = [];
 let backups = [];
 
+// Función para eliminar la carpeta de autenticación (¡nueva!)
+function deleteAuthFolder() {
+  if (fs.existsSync(AUTH_FOLDER)) {
+    fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
+    console.log(`Carpeta de autenticación '${AUTH_FOLDER}' eliminada.`);
+  }
+}
+
 // Util
 function generarIdUnico(){ return 'owner_' + Math.random().toString(36).substr(2,9); }
 function registrarOwner(ownerId, nombre){ owner = { id: ownerId, nombre, registrado: Date.now() }; console.log('Owner registrado:', owner); }
@@ -40,6 +48,8 @@ function resetDelay(){ reconnectDelay = 1000; }
 // Inicia bot
 async function startBot(){
   try{
+    // *** MODIFICACIÓN: FORZAR ELIMINACIÓN DE CREDENCIALES AL INICIO ***
+    deleteAuthFolder(); 
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_FOLDER);
     const { version } = await fetchLatestBaileysVersion().catch(()=>({ version: [2,3000,0] }));
     console.log('Baileys version:', version);
