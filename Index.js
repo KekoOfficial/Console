@@ -483,4 +483,9 @@ if (file !== 'creds.json') {
 const filePath = path.join(dir, file);
 unlinkSync(filePath, err => {
 if (err) {
-console.log(chalk.bold.red(`\n⚠︎ El archivo ${file} no se
+console.log(chalk.bold.red(`\n⚠︎ El archivo ${file} no se puede eliminar.\n` + err))
+} else {
+console.log(chalk.bold.green(`\nꕥ El archivo ${file} ha sido eliminado correctamente.\n`))
+}})}}))}}
+
+_quickTest().catch(console.error)
