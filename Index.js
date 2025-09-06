@@ -81,9 +81,9 @@ async function sendWelcomeMessageWithPersistence(sock, user, groupName) {
             const { date, time } = getFormattedDateTime();
             const message = `
 ╔═══════════════════╗
-║ Únete Porfavor Pará Hacer Amigos
- https://chat.whatsapp.com/He3gbHmBzeP31qiMaAyIuA?mode=ems_copy_c
-
+║       🤖 SUBBOT       ║
+╠═══════════════════╣
+║ ¡Hola! Soy tu Subbot. ║
 ╠═══════════════════╣
 ║ 👥 Grupo: ${groupName}
 ║ 📅 Fecha: ${date}
