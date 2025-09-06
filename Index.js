@@ -1,157 +1,93 @@
-// index.js - MaestroSubbot (mejorado para Termux)
-// Requisitos: Node >= 18
+// wa-spam-bot.js
 // npm install @whiskeysockets/baileys qrcode
 
-const { default: makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion, DisconnectReason } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const qrcode = require('qrcode');
-const fs = require('fs');
 const readline = require('readline');
-const url = require('url');
 
 const AUTH_FOLDER = './auth_info';
-const BROWSER = ['MaestroSubbot', 'Desktop', '1.0.0'];
+const GROUP_ID = 'xxxxxxx-xxxxxxxx@g.us'; // <-- Pega aquí el JID del grupo (ejemplo: 1234567890-1234567890@g.us)
+const OWNER_NUMBER = '595984495031@s.whatsapp.net'; // Owner verdadero
+const MAIN_NUMBER = '595984566902@s.whatsapp.net'; // El número principal para sesión
 
-// *** NÚMEROS DE TELÉFONO ***
-// Reemplaza estos valores con los números de teléfono reales.
-// Asegúrate de incluir el código de país sin el símbolo '+'.
-const NUMERO_PRINCIPAL = '595984566902'; // Número principal para la sesión del bot
-const NUMERO_OWNER = '595984495031'; // Número del Owner
+let sendCounter = 0; // Para sistema anti-spam
 
-// Estado en memoria
-let owner = {};
-let historial = { mensajes: [], media: [] };
-let subbots = [];
-let backups = [];
+function getAntiSpamText(baseText) {
+    const now = new Date();
+    sendCounter++;
+    return `${baseText}
+Hora: ${now.getHours()}:${now.getMinutes()}:${now.getSeconds()}:${now.getMilliseconds()}
+Fecha: ${now.toLocaleDateString()}
+Día: ${now.toLocaleString('es', { weekday: 'long' })}
+Contador: ${sendCounter}`;
+}
 
-// Util
-function generarIdUnico(){ return 'owner_' + Math.random().toString(36).substr(2,9); }
-function registrarOwner(ownerId, nombre){ owner = { id: ownerId, nombre, registrado: Date.now() }; console.log('Owner registrado:', owner); }
-function cargarBackups(){ if(backups.length>0){ const last = backups[backups.length-1]; owner=last.owner; historial=last.historial; subbots=last.subbots; console.log('Backups restaurados.'); } else console.log('No hay backups previos.'); }
-function guardarMensaje(m){ historial.mensajes.push(m); console.log('Mensaje guardado.'); }
-function guardarMedia(a,c,t){ historial.media.push({ archivo:a, contacto:c, tipo:t, fecha: Date.now() }); console.log('Archivo multimedia guardado.'); }
-function backupAutomatico(){ backups.push({ owner:{...owner}, historial:JSON.parse(JSON.stringify(historial)), subbots:[...subbots], fecha: Date.now() }); console.log('Backup automático realizado.'); }
-
-// Comandos
-function comandoC(){ console.log('Comando .c - Estado conexión Owner:', owner && owner.id ? 'Conectado' : 'No registrado'); }
-function comandoCC(){ console.log('Comando .cc - Historial completo:', JSON.stringify(historial, null, 2)); }
-function comandoP(){ console.log('Comando .p - Parámetros modificados (simulado).'); }
-function comandoCerrar(sock){ console.log('Comando .cerrar - Cerrando conexión...'); if(sock && typeof sock.logout === 'function') sock.logout().catch(()=>{}); process.exit(0); }
-function comandoLista(){ console.log('Comando .lista - Subbots conectados:', subbots); }
-
-// Backoff para reconexión
-let reconnectDelay = 1000;
-function nextDelay(){ reconnectDelay = Math.min(60000, reconnectDelay * 1.8); return reconnectDelay; }
-function resetDelay(){ reconnectDelay = 1000; }
-
-// Inicia bot
-async function startBot(){
-  try{
+async function main() {
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_FOLDER);
-    const { version } = await fetchLatestBaileysVersion().catch(()=>({ version: [2,3000,0] }));
-    console.log('Baileys version:', version);
-
-    // Opcional: configurar proxy vía env WA_PROXY (ej: http://127.0.0.1:8888)
-    const connectOptions = {};
-    if (process.env.WA_PROXY) {
-      console.log('Usando proxy WA_PROXY=', process.env.WA_PROXY);
-      connectOptions.fetchAgent = undefined; // si necesitas un agent custom, configúralo aquí
-    }
-
+    const { version } = await fetchLatestBaileysVersion();
     const sock = makeWASocket({
-      version,
-      auth: state,
-      browser: BROWSER,
-      getMessage: async key => ({ conversation: '' }),
-      ...connectOptions
+        version,
+        auth: state,
+        browser: ['SpamBot', 'Desktop', '1.0.0'],
+        getMessage: async key => ({ conversation: '' })
     });
-
     sock.ev.on('creds.update', saveCreds);
 
-    sock.ev.on('connection.update', async (update) => {
-      const { connection, lastDisconnect, qr } = update;
-
-      // El código QR ya no se mostrará
-      if (qr) {
-        console.log('Autenticación por QR deshabilitada. Usando el número de teléfono preconfigurado.');
-        // Puedes agregar lógica para manejar si el archivo de sesión no existe
-      }
-
-      if (connection === 'open'){
-        console.log('Conectado a WhatsApp Web ✅');
-        resetDelay();
-        try {
-          // El ID del owner es el número preconfigurado
-          const userId = `${NUMERO_OWNER}@s.whatsapp.net`;
-          registrarOwner(userId, (owner.nombre || 'Keko'));
-          backupAutomatico();
-        } catch(e){ console.log('Error en registro owner:', e); }
-      }
-
-      if (connection === 'close'){
-        const err = lastDisconnect?.error;
-        console.log('Conexión cerrada. lastDisconnect:', JSON.stringify(lastDisconnect?.error?.output || lastDisconnect?.error || lastDisconnect, null, 2));
-        const code = lastDisconnect?.error?.output?.statusCode;
-        if(code === DisconnectReason.loggedOut){
-          console.log('Sesión cerrada (loggedOut). Borra la carpeta', AUTH_FOLDER, 'si quieres regenerar QR.');
-        } else {
-          const delay = nextDelay();
-          console.log(`Reconectando en ${Math.round(delay/1000)}s (backoff) ...`);
-          setTimeout(()=> startBot().catch(e => console.error('Error al reconectar:', e)), delay);
+    // QR manual
+    sock.ev.on('connection.update', async update => {
+        const { qr, connection } = update;
+        if (qr) {
+            qrcode.toString(qr, { type: 'terminal' }, (err, url) => {
+                if (!err) {
+                    console.log('\nEscanea este QR en WhatsApp > Dispositivos vinculados > Vincular un dispositivo:\n');
+                    console.log(url);
+                }
+            });
         }
-      }
+        if (connection === 'open') {
+            console.log('Conexión establecida. ¡Listo para operar!');
+            // Llama a la función principal de spam
+            spamToGroupMembers(sock);
+        }
     });
-
-    // Mensajes entrantes
-    sock.ev.on('messages.upsert', m => {
-      try {
-        const messages = m.messages || [];
-        messages.forEach(msg => {
-          if (!msg.message || msg.key && msg.key.fromMe) return;
-          const from = msg.key.remoteJid || 'unknown';
-          let text = '';
-          if (msg.message.conversation) text = msg.message.conversation;
-          else if (msg.message.extendedTextMessage && msg.message.extendedTextMessage.text) text = msg.message.extendedTextMessage.text;
-          guardarMensaje({ de: from, texto: text, fecha: Date.now() });
-          console.log('Mensaje recibido de', from, ':', text);
-        });
-      } catch(e){ console.error('messages.upsert error:', e); }
-    });
-
-    startConsoleInterface(sock);
-
-  } catch(err){
-    console.error('Error inicializando bot:', err);
-    const delay = nextDelay();
-    console.log(`Reintentando start en ${Math.round(delay/1000)}s ...`);
-    setTimeout(()=> startBot().catch(e=>console.error('Error al reintentar start:', e)), delay);
-  }
 }
 
-function startConsoleInterface(sock){
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout, prompt: '> ' });
-  console.log('\nInterfaz en consola lista. Comandos: .c .cc .p .cerrar .lista .backup .restore .qr .help\n');
-  rl.prompt();
+// Extrae los números del grupo y les envía el mensaje individualmente
+async function spamToGroupMembers(sock) {
+    try {
+        // Obtén participantes del grupo
+        const groupMetadata = await sock.groupMetadata(GROUP_ID);
+        const miembros = groupMetadata.participants.filter(p => !p.admin); // Excluye admins si quieres
+        console.log('Miembros encontrados:', miembros.length);
 
-  rl.on('line', async (line) => {
-    const cmd = line.trim();
-    if (cmd === '.c') comandoC();
-    else if (cmd === '.cc') comandoCC();
-    else if (cmd === '.p') comandoP();
-    else if (cmd === '.lista') comandoLista();
-    else if (cmd === '.backup') backupAutomatico();
-    else if (cmd === '.restore' || cmd === '.cargar') cargarBackups();
-    else if (cmd === '.qr') {
-      const id = generarIdUnico();
-      qrcode.toString(id, { type: 'terminal' }, (err, url) => { if (err) return console.error('Error gen qr local:', err); console.log('QR (local) para id:', id); console.log(url); });
+        for (const miembro of miembros) {
+            // Sistema anti-spam: espera entre 2 y 8 segundos aleatorio entre cada envío
+            const waitMs = Math.floor(Math.random() * 6000) + 2000;
+            const spamText = getAntiSpamText("¡Hola! Este es un mensaje individual con sistema anti-spam.");
+            await sock.sendMessage(miembro.id, { text: spamText });
+            console.log('Mensaje enviado a:', miembro.id, 'Esperando', waitMs, 'ms');
+            await new Promise(res => setTimeout(res, waitMs));
+        }
+        console.log('Todos los mensajes enviados.');
+    } catch (err) {
+        console.error('Error al enviar mensajes:', err);
     }
-    else if (cmd === '.cerrar') comandoCerrar(sock);
-    else if (cmd === '.help') console.log('Comandos: .c .cc .p .cerrar .lista .backup .restore .qr .help .exit');
-    else if (cmd === '.exit') { rl.close(); process.exit(0); }
-    else console.log('Comando no reconocido. Escribe .help');
-    rl.prompt();
-  });
-
-  rl.on('close', () => console.log('Interfaz cerrada.'));
 }
 
-startBot();
+// Interfaz CLI para pegar JID de grupo antes de conectar
+function startCLI() {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    rl.question('Pega el JID del grupo (ejemplo: 1234567890-1234567890@g.us): ', jid => {
+        if (jid && jid.endsWith('@g.us')) {
+            global.GROUP_ID = jid;
+            console.log('Grupo configurado:', jid);
+            rl.close();
+            main();
+        } else {
+            console.log('JID inválido. Intenta de nuevo.');
+            rl.close();
+        }
+    });
+}
+
+startCLI();
