@@ -6,27 +6,27 @@ const { default: makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion,
 const qrcode = require('qrcode');
 const fs = require('fs');
 const readline = require('readline');
+const url = require('url');
 
 const AUTH_FOLDER = './auth_info';
 const BROWSER = ['MaestroSubbot', 'Desktop', '1.0.0'];
+
+// *** NÚMEROS DE TELÉFONO ***
+// Reemplaza estos valores con los números de teléfono reales.
+// Asegúrate de incluir el código de país sin el símbolo '+'.
+const NUMERO_PRINCIPAL = '595984566902'; // Número principal para la sesión del bot
+const NUMERO_OWNER = '595984495031'; // Número del Owner
 
 // Estado en memoria
 let owner = {};
 let historial = { mensajes: [], media: [] };
 let subbots = [];
 let backups = [];
-let ultimoQR = null; // <-- QR actual para escanear
 
 // Util
 function generarIdUnico(){ return 'owner_' + Math.random().toString(36).substr(2,9); }
 function registrarOwner(ownerId, nombre){ owner = { id: ownerId, nombre, registrado: Date.now() }; console.log('Owner registrado:', owner); }
-function cargarBackups(){ 
-  if(backups.length>0){ 
-    const last = backups[backups.length-1]; 
-    owner=last.owner; historial=last.historial; subbots=last.subbots; 
-    console.log('Backups restaurados.'); 
-  } else console.log('No hay backups previos.'); 
-}
+function cargarBackups(){ if(backups.length>0){ const last = backups[backups.length-1]; owner=last.owner; historial=last.historial; subbots=last.subbots; console.log('Backups restaurados.'); } else console.log('No hay backups previos.'); }
 function guardarMensaje(m){ historial.mensajes.push(m); console.log('Mensaje guardado.'); }
 function guardarMedia(a,c,t){ historial.media.push({ archivo:a, contacto:c, tipo:t, fecha: Date.now() }); console.log('Archivo multimedia guardado.'); }
 function backupAutomatico(){ backups.push({ owner:{...owner}, historial:JSON.parse(JSON.stringify(historial)), subbots:[...subbots], fecha: Date.now() }); console.log('Backup automático realizado.'); }
@@ -50,11 +50,11 @@ async function startBot(){
     const { version } = await fetchLatestBaileysVersion().catch(()=>({ version: [2,3000,0] }));
     console.log('Baileys version:', version);
 
-    // Opcional: configurar proxy vía env WA_PROXY
+    // Opcional: configurar proxy vía env WA_PROXY (ej: http://127.0.0.1:8888)
     const connectOptions = {};
     if (process.env.WA_PROXY) {
       console.log('Usando proxy WA_PROXY=', process.env.WA_PROXY);
-      connectOptions.fetchAgent = undefined;
+      connectOptions.fetchAgent = undefined; // si necesitas un agent custom, configúralo aquí
     }
 
     const sock = makeWASocket({
@@ -70,25 +70,18 @@ async function startBot(){
     sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr } = update;
 
+      // El código QR ya no se mostrará
       if (qr) {
-        ultimoQR = qr; // Guardamos QR real para comandos futuros
-        qrcode.toString(qr, { type: 'terminal' }, (err, out) => {
-          if(err){ 
-            console.error('Error generando QR ascii:', err); 
-            console.log('QR string:', qr); 
-            return; 
-          }
-          console.log('\n---- ESCANEA ESTE QR EN WHATSAPP > Dispositivos vinculados > Vincular un dispositivo ----\n');
-          console.log(out);
-          console.log('\nSi no puedes ver el QR aquí, copia el string a un editor:\n', qr, '\n');
-        });
+        console.log('Autenticación por QR deshabilitada. Usando el número de teléfono preconfigurado.');
+        // Puedes agregar lógica para manejar si el archivo de sesión no existe
       }
 
       if (connection === 'open'){
         console.log('Conectado a WhatsApp Web ✅');
         resetDelay();
         try {
-          const userId = sock.user && (sock.user.id || sock.user.jid) ? (sock.user.id || sock.user.jid) : generarIdUnico();
+          // El ID del owner es el número preconfigurado
+          const userId = `${NUMERO_OWNER}@s.whatsapp.net`;
           registrarOwner(userId, (owner.nombre || 'Keko'));
           backupAutomatico();
         } catch(e){ console.log('Error en registro owner:', e); }
@@ -148,12 +141,8 @@ function startConsoleInterface(sock){
     else if (cmd === '.backup') backupAutomatico();
     else if (cmd === '.restore' || cmd === '.cargar') cargarBackups();
     else if (cmd === '.qr') {
-      if(!ultimoQR) return console.log('No hay QR disponible actualmente.');
-      qrcode.toString(ultimoQR, { type: 'terminal' }, (err, out) => {
-        if(err) return console.error('Error generando QR ascii:', err);
-        console.log('QR actual para escanear:');
-        console.log(out);
-      });
+      const id = generarIdUnico();
+      qrcode.toString(id, { type: 'terminal' }, (err, url) => { if (err) return console.error('Error gen qr local:', err); console.log('QR (local) para id:', id); console.log(url); });
     }
     else if (cmd === '.cerrar') comandoCerrar(sock);
     else if (cmd === '.help') console.log('Comandos: .c .cc .p .cerrar .lista .backup .restore .qr .help .exit');
