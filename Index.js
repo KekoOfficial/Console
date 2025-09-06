@@ -180,7 +180,7 @@ ${chalk.blue('╚══════╝╚══════╝╚═╝  ╚═�
         } catch (e) {
             logError(`Error al enviar mensaje programado: ${e.message}`)
         }
-    });
+    })
 }
 
 startBot();
