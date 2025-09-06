@@ -1,9 +1,9 @@
-const { makeWASocket, useMultiFileAuthState, DisconnectReason, jidNormalizedUser, fetchLatestBaileysVersion, Browsers } = require('@whiskeysockets/baileys');
-const pino = require('pino');
-const fs = require('fs');
-const cron = require('node-cron');
-const qrcode = require('qrcode-terminal');
-const chalk = require('chalk');
+const { makeWASocket, useMultiFileAuthState, DisconnectReason, jidNormalizedUser, fetchLatestBaileysVersion, Browsers } = require('@whiskeysockets/baileys')
+const pino = require('pino')
+const fs = require('fs')
+const cron = require('node-cron')
+const qrcode = require('qrcode-terminal')
+const chalk = require('chalk')
 
 // === Configuración del Bot (Valores fijos) ===
 const botVersion = "1.0.0";
@@ -14,10 +14,10 @@ let sentUsers = [];
 
 // Asegura que las carpetas existan
 if (!fs.existsSync('./logs')) {
-    fs.mkdirSync('./logs');
+    fs.mkdirSync('./logs')
 }
 if (!fs.existsSync('./session')) {
-    fs.mkdirSync('./session');
+    fs.mkdirSync('./session')
 }
 
 // === Funciones de utilidad y persistencia ===
@@ -172,13 +172,13 @@ ${chalk.blue('╚══════╝╚══════╝╚═╝  ╚═�
     });
 
     cron.schedule('0 8 * * *', async () => {
-        const groupJid = 'TU_JID_DE_GRUPO@g.us';
-        const message = '¡Buenos días! Este es un recordatorio diario. ¡Que tengas un gran día!';
+        const groupJid = 'TU_JID_DE_GRUPO@g.us'
+        const message = '¡Buenos días! Este es un recordatorio diario. ¡Que tengas un gran día!'
         try {
-            await sock.sendMessage(groupJid, { text: message });
-            log(`Mensaje diario enviado a [${groupJid}]`);
+            await sock.sendMessage(groupJid, { text: message })
+            log(`Mensaje diario enviado a [${groupJid}]`)
         } catch (e) {
-            logError(`Error al enviar mensaje programado: ${e.message}`);
+            logError(`Error al enviar mensaje programado: ${e.message}`)
         }
     });
 }
